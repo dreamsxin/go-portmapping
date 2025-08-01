@@ -1,6 +1,8 @@
-package protocols
+package tcp
 
 import (
+	"context"
+	"errors"
 	"log"
 	"net"
 	"strconv"
@@ -14,6 +16,9 @@ import (
 var (
 	listeners = make(map[string]net.Listener)
 	mu        sync.Mutex
+	// 连接数限制
+	maxConnections = 1000
+	connSemaphore  = make(chan struct{}, maxConnections)
 )
 
 // StartTCPForwarder 启动TCP转发（导出函数）
@@ -53,40 +58,96 @@ func StartTCPForwarder(rule config.Rule, key string) {
 				continue
 			}
 
-			// 处理新连接
-			go HandleTCPConnection(clientConn, rule, key)
+			// 限制最大连接数
+			select {
+			case connSemaphore <- struct{}{}:
+				// 处理新连接
+				go func() {
+					defer func() {
+						<-connSemaphore
+					}()
+					HandleTCPConnection(clientConn, rule, key)
+				}()
+			default:
+				clientConn.Close()
+				log.Printf("TCP连接数已达上限: %d", maxConnections)
+			}
 		}
 	}()
 }
 
 // HandleTCPConnection 处理TCP连接（导出函数）
 func HandleTCPConnection(clientConn net.Conn, rule config.Rule, key string) {
+	// 设置连接超时
+	clientConn.SetDeadline(time.Time{})
 	defer clientConn.Close()
 
 	// 更新连接统计
 	stats.IncrementConnections(key)
 	defer stats.DecrementConnections(key)
 
+	// 创建上下文用于取消操作
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	// 连接目标服务器
 	targetAddr := net.JoinHostPort(rule.TargetHost, strconv.Itoa(rule.TargetPort))
-	targetConn, err := net.Dial("tcp", targetAddr)
+	// 设置连接超时
+	conn, err := net.DialTimeout("tcp", targetAddr, 5*time.Second)
 	if err != nil {
 		log.Printf("连接目标服务器失败 %s: %v", targetAddr, err)
+		// 向客户端发送错误信息
+		clientConn.Write([]byte("Connection failed: " + err.Error() + "\n"))
 		return
 	}
-	defer targetConn.Close()
+	defer conn.Close()
+	// 设置读写超时
+	conn.SetDeadline(time.Time{})
 
 	log.Printf("TCP连接已建立: %s <-> %s", clientConn.RemoteAddr(), targetAddr)
 
 	// 双向转发数据
-	go stats.CopyStreamWithStats(clientConn, targetConn, key, true)
-	go stats.CopyStreamWithStats(targetConn, clientConn, key, false)
+	var wg sync.WaitGroup
+	errChan := make(chan error, 2)
 
-	// 等待连接关闭
+	wg.Add(2)
+
+	// 客户端到目标服务器
+	go func() {
+		defer wg.Done()
+		_, err := stats.CopyStreamWithStats(clientConn, conn, key, true)
+		if err != nil && !errors.Is(err, net.ErrClosed) {
+			errChan <- err
+		}
+	}()
+
+	// 目标服务器到客户端
+	go func() {
+		defer wg.Done()
+		_, err := stats.CopyStreamWithStats(conn, clientConn, key, false)
+		if err != nil && !errors.Is(err, net.ErrClosed) {
+			errChan <- err
+		}
+	}()
+
+	// 等待任一方向出错或完成
 	select {
-	case <-time.After(30 * time.Minute):
-		log.Printf("TCP连接超时关闭: %s <-> %s", clientConn.RemoteAddr(), targetAddr)
+	case err := <-errChan:
+		if err != nil {
+			log.Printf("连接传输错误: %v", err)
+		}
+		// 取消上下文，关闭所有连接
+		cancel()
+		clientConn.Close()
+		conn.Close()
+	case <-ctx.Done():
+		// 上下文已取消
+		return
 	}
+
+	// 等待所有goroutine完成
+	wg.Wait()
+	log.Printf("TCP连接已关闭: %s <-> %s", clientConn.RemoteAddr(), targetAddr)
 }
 
 // StopTCPForwarders 停止所有TCP转发器

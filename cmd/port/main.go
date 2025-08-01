@@ -5,9 +5,12 @@ import (
 	"log"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/dreamsxin/go-portmapping/internal/config"
-	"github.com/dreamsxin/go-portmapping/internal/protocols"
+	"github.com/dreamsxin/go-portmapping/internal/protocols/tcp"
+	"github.com/dreamsxin/go-portmapping/internal/protocols/udp"
+	"github.com/dreamsxin/go-portmapping/internal/protocols/websocket"
 	"github.com/dreamsxin/go-portmapping/internal/stats"
 )
 
@@ -21,19 +24,30 @@ func main() {
 	log.SetOutput(os.Stdout)
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 
-	// 加载初始配置
-	if err := config.LoadConfig(*configFile); err != nil {
+	// 确定配置文件路径，环境变量优先于命令行参数
+	configPath := os.Getenv("CONFIG_PATH")
+	if configPath == "" {
+		configPath = *configFile
+	}
+	os.Setenv("CONFIG_PATH", configPath)
+
+	// 加载初始配置（新接口无需传入文件路径参数）
+	if err := config.LoadConfig(); err != nil {
 		log.Fatalf("加载配置文件失败: %v", err)
 	}
 
 	// 启动配置文件监控（热加载）
-	go config.WatchConfig(*configFile, func() {
-		log.Println("配置文件变化，重新加载规则...")
-		startAllForwarders()
-	})
+	go func() {
+		if err := config.WatchConfig(func() {
+			log.Println("配置文件变化，重新加载规则...")
+			startAllForwarders()
+		}); err != nil {
+			log.Printf("配置文件监控失败: %v", err)
+		}
+	}()
 
 	// 启动流量统计打印
-	go stats.PrintTrafficStats()
+	go stats.PrintTrafficStats(30 * time.Second)
 
 	// 启动所有转发规则
 	startAllForwarders()
@@ -60,9 +74,9 @@ func startAllForwarders() {
 	}
 
 	// 停止各协议已禁用的转发器
-	protocols.StopTCPForwarders(activeKeys)
-	protocols.StopUDPForwarders(activeKeys)
-	protocols.StopWebSocketForwarders(activeKeys)
+	tcp.StopTCPForwarders(activeKeys)
+	udp.StopUDPForwarders(activeKeys)
+	websocket.StopWebSocketForwarders(activeKeys)
 
 	// 启动或重启启用的规则
 	for _, rule := range rules {
@@ -73,11 +87,11 @@ func startAllForwarders() {
 		key := config.GetRuleKey(rule)
 		switch rule.Protocol {
 		case "tcp":
-			protocols.StartTCPForwarder(rule, key)
+			tcp.StartTCPForwarder(rule, key)
 		case "udp":
-			protocols.StartUDPForwarder(rule, key)
+			udp.StartUDPForwarder(rule, key)
 		case "websocket":
-			protocols.StartWebSocketForwarder(rule, key)
+			websocket.StartWebSocketForwarder(rule, key)
 		default:
 			log.Printf("不支持的协议类型: %s", rule.Protocol)
 		}

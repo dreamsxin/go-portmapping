@@ -1,6 +1,7 @@
-package protocols
+package udp
 
 import (
+	"context"
 	"log"
 	"net"
 	"strconv"
@@ -12,9 +13,18 @@ import (
 )
 
 var (
-	udpConns = make(map[string]*net.UDPConn)
-	udpMu    sync.Mutex
+	udpConns    = make(map[string]*net.UDPConn)
+	udpMu       sync.Mutex
+	clientConns = make(map[string]*clientConnState)
+	clientMu    sync.Mutex
 )
+
+// 客户端连接状态
+type clientConnState struct {
+	lastActive time.Time
+	ctx        context.Context
+	cancel     context.CancelFunc
+}
 
 // StartUDPForwarder 启动UDP转发器
 func StartUDPForwarder(rule config.Rule, key string) {
@@ -71,13 +81,53 @@ func StartUDPForwarder(rule config.Rule, key string) {
 			}
 
 			// 处理UDP数据包
-			go handleUDPConnection(conn, clientAddr, buffer[:n], rule, key)
+			go func() {
+				clientKey := clientAddr.String()
+				clientMu.Lock()
+				// 检查是否已有活跃连接
+				if state, exists := clientConns[clientKey]; exists {
+					// 更新最后活动时间
+					state.lastActive = time.Now()
+					clientMu.Unlock()
+					return
+				}
+				// 创建新的上下文
+				ctx, cancel := context.WithCancel(context.Background())
+				clientConns[clientKey] = &clientConnState{
+					lastActive: time.Now(),
+					ctx:        ctx,
+					cancel:     cancel,
+				}
+				clientMu.Unlock()
+
+				// 启动超时清理goroutine
+				go func() {
+					ticker := time.NewTicker(30 * time.Second)
+					defer ticker.Stop()
+					for {
+						select {
+						case <-ticker.C:
+							clientMu.Lock()
+							state, exists := clientConns[clientKey]
+							if exists && time.Since(state.lastActive) > 60*time.Second {
+								state.cancel()
+								delete(clientConns, clientKey)
+							}
+							clientMu.Unlock()
+						case <-ctx.Done():
+							return
+						}
+					}
+				}()
+
+				handleUDPConnection(conn, clientAddr, buffer[:n], rule, key, ctx)
+			}()
 		}
 	}()
 }
 
 // handleUDPConnection 处理UDP连接和数据转发
-func handleUDPConnection(serverConn *net.UDPConn, clientAddr *net.UDPAddr, data []byte, rule config.Rule, key string) {
+func handleUDPConnection(serverConn *net.UDPConn, clientAddr *net.UDPAddr, data []byte, rule config.Rule, key string, ctx context.Context) {
 	// 更新接收流量统计
 	stats.RecordBytesReceived(key, uint64(len(data)))
 
@@ -101,24 +151,36 @@ func handleUDPConnection(serverConn *net.UDPConn, clientAddr *net.UDPAddr, data 
 	// 从目标服务器接收响应并返回给客户端
 	buffer := make([]byte, 65536)
 	for {
-		// 设置读取超时，避免长时间阻塞
-		serverConn.SetReadDeadline(time.Now().Add(5 * time.Second))
-		n, _, err := serverConn.ReadFromUDP(buffer)
-		if err != nil {
-			// 超时是正常现象，无需记录
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+		select {
+		case <-ctx.Done():
+			// 上下文取消，退出goroutine
+			return
+		default:
+			// 设置读取超时
+			serverConn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			n, _, err := serverConn.ReadFromUDP(buffer)
+			if err != nil {
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					return
+				}
+				log.Printf("UDP读取响应失败: %v", err)
 				return
 			}
-			log.Printf("UDP读取响应失败: %v", err)
-			return
+
+			// 将响应返回给客户端
+			serverConn.WriteToUDP(buffer[:n], clientAddr)
+
+			// 更新流量统计
+			stats.RecordBytesReceived(key, uint64(n))
+			stats.RecordBytesSent(key, uint64(n))
+
+			// 更新最后活动时间
+			clientMu.Lock()
+			if state, exists := clientConns[clientAddr.String()]; exists {
+				state.lastActive = time.Now()
+			}
+			clientMu.Unlock()
 		}
-
-		// 将响应返回给客户端
-		serverConn.WriteToUDP(buffer[:n], clientAddr)
-
-		// 更新流量统计
-		stats.RecordBytesReceived(key, uint64(n))
-		stats.RecordBytesSent(key, uint64(n))
 	}
 }
 
@@ -135,4 +197,12 @@ func StopUDPForwarders(activeKeys map[string]bool) {
 			log.Printf("UDP转发已停止: %s", key)
 		}
 	}
+
+	// 清理所有客户端连接状态
+	clientMu.Lock()
+	for _, state := range clientConns {
+		state.cancel()
+	}
+	clientConns = make(map[string]*clientConnState)
+	clientMu.Unlock()
 }

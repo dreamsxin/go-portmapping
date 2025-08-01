@@ -2,53 +2,117 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"os"
-	"strconv"
 	"sync"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 )
 
 // Rule 定义端口转发规则
+// 包含协议类型、监听端口、目标地址等必要信息
 type Rule struct {
-	Protocol   string `json:"protocol"`   //协议类型: tcp/udp/websocket
-	ListenPort int    `json:"listenPort"` //监听端口
-	TargetHost string `json:"targetHost"` //目标主机
-	TargetPort int    `json:"targetPort"` //目标端口
-	Enabled    bool   `json:"enabled"`    //是否启用该规则
+	Protocol   string `json:"protocol"`   // 协议类型: tcp/udp/websocket
+	ListenPort int    `json:"listenPort"` // 监听端口(1-65535)
+	TargetHost string `json:"targetHost"` // 目标主机(不能为空)
+	TargetPort int    `json:"targetPort"` // 目标端口(1-65535)
+	Enabled    bool   `json:"enabled"`    // 是否启用该规则
 }
 
 var (
-	rules []Rule
-	mu    sync.RWMutex
+	rules      []Rule
+	mu         sync.RWMutex
+	configPath string // 配置文件路径
 )
 
+// Validate 验证规则是否有效
+func (r *Rule) Validate() error {
+	// 验证协议类型
+	if r.Protocol != "tcp" && r.Protocol != "udp" && r.Protocol != "websocket" {
+		return errors.New("不支持的协议类型，必须是tcp/udp/websocket")
+	}
+
+	// 验证监听端口
+	if r.ListenPort < 1 || r.ListenPort > 65535 {
+		return errors.New("监听端口必须在1-65535范围内")
+	}
+
+	// 验证目标主机
+	if r.TargetHost == "" {
+		return errors.New("目标主机不能为空")
+	}
+
+	// 验证目标端口
+	if r.TargetPort < 1 || r.TargetPort > 65535 {
+		return errors.New("目标端口必须在1-65535范围内")
+	}
+
+	return nil
+}
+
 // LoadConfig 加载配置文件并返回错误
-func LoadConfig(filePath string) error {
-	fileContent, err := os.ReadFile(filePath)
+// 支持通过环境变量 CONFIG_PATH 指定配置文件路径，默认使用当前目录下的rules.json
+func LoadConfig() error {
+	// 获取配置文件路径
+	path := os.Getenv("CONFIG_PATH")
+	if path == "" {
+		path = "rules.json"
+	}
+	configPath = path
+
+	fileContent, err := os.ReadFile(path)
 	if err != nil {
-		return err
+		return errors.Join(errors.New("读取配置文件失败"), err)
 	}
 
 	var newRules []Rule
 	if err := json.Unmarshal(fileContent, &newRules); err != nil {
-		return err
+		return errors.Join(errors.New("解析配置文件失败"), err)
+	}
+
+	// 验证所有规则
+	validRules := []Rule{}
+	for i, rule := range newRules {
+		if err := rule.Validate(); err != nil {
+			log.Printf("规则 %d 无效: %v (将被跳过)", i+1, err)
+			continue
+		}
+		validRules = append(validRules, rule)
 	}
 
 	mu.Lock()
-	rules = newRules
+	rules = validRules
 	mu.Unlock()
 
-	log.Printf("已加载 %d 条转发规则", len(newRules))
+	log.Printf("已加载 %d 条有效转发规则 (共 %d 条，%d 条无效)", len(validRules), len(newRules), len(newRules)-len(validRules))
 	return nil
 }
 
 // WatchConfig 监控配置文件变化并触发回调
-func WatchConfig(filePath string, onChange func()) error {
+// 实现了500ms防抖机制，避免文件修改时频繁触发加载
+func WatchConfig(onChange func()) error {
+	if configPath == "" {
+		return errors.New("请先调用LoadConfig加载配置")
+	}
+
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		return err
+		return errors.Join(errors.New("创建文件监控器失败"), err)
+	}
+
+	// 添加文件监控
+	if err := watcher.Add(configPath); err != nil {
+		watcher.Close()
+		return errors.Join(errors.New("添加文件监控失败"), err)
+	}
+
+	// 防抖定时器
+	debounceTimer := time.NewTimer(0)
+	if !debounceTimer.Stop() {
+		<-debounceTimer.C
 	}
 
 	go func() {
@@ -59,42 +123,52 @@ func WatchConfig(filePath string, onChange func()) error {
 				if !ok {
 					return
 				}
-				// 配置文件被写入或删除后重新加载
+
+				// 只处理配置文件的写入和删除事件
 				if (event.Op&fsnotify.Write == fsnotify.Write ||
 					event.Op&fsnotify.Remove == fsnotify.Remove) &&
-					event.Name == filePath {
-					log.Println("检测到配置文件变化...")
-					if err := LoadConfig(filePath); err != nil {
-						log.Printf("重新加载配置失败: %v", err)
-						continue
-					}
-					if onChange != nil {
-						onChange()
-					}
+					event.Name == configPath {
+
+					// 重置防抖定时器
+					debounceTimer.Reset(500 * time.Millisecond)
 				}
+
 			case err, ok := <-watcher.Errors:
 				if !ok {
 					return
 				}
 				log.Printf("配置文件监控错误: %v", err)
+
+			case <-debounceTimer.C:
+				log.Println("检测到配置文件变化，重新加载...")
+				if err := LoadConfig(); err != nil {
+					log.Printf("重新加载配置失败: %v", err)
+					continue
+				}
+				if onChange != nil {
+					onChange()
+				}
 			}
 		}
 	}()
 
-	return watcher.Add(filePath)
+	return nil
 }
 
 // GetRules 获取当前规则列表（线程安全）
+// 返回规则副本以避免外部修改内部状态
 func GetRules() []Rule {
 	mu.RLock()
 	defer mu.RUnlock()
-	// 返回规则副本避免外部修改
+
+	// 返回规则副本
 	result := make([]Rule, len(rules))
 	copy(result, rules)
 	return result
 }
 
-// GetRuleKey生成规则唯一标识
+// GetRuleKey 生成规则唯一标识
+// 格式为 "protocol:listenPort"，确保不同规则有唯一标识
 func GetRuleKey(rule Rule) string {
-	return rule.Protocol + ":" + strconv.Itoa(rule.ListenPort)
+	return fmt.Sprintf("%s:%d", rule.Protocol, rule.ListenPort)
 }
