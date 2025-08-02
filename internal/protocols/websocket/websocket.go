@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -63,7 +64,6 @@ func StartWebSocketForwarder(rule config.Rule, key string) {
 
 		// 创建连接上下文，设置超时
 		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
 
 		// 跟踪客户端连接
 		httpMu.Lock()
@@ -72,14 +72,6 @@ func StartWebSocketForwarder(rule config.Rule, key string) {
 		}
 		clientConns[key][wsConn] = cancel
 		httpMu.Unlock()
-
-		// 设置连接超时
-		if err := wsConn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
-			log.Printf("设置读取超时失败: %v", err)
-			wsConn.Close()
-			return
-		}
-
 		// 处理WebSocket连接
 		go handleWebSocketConnection(ctx, wsConn, r, rule, key, cancel)
 	})
@@ -124,6 +116,7 @@ func handleWebSocketConnection(ctx context.Context, wsConn *websocket.Conn, r *h
 	defer stats.DecrementConnections(key)
 
 	// 解析动态端口参数
+	path := r.URL.Path
 	targetPort := rule.TargetPort
 	if rule.DynamicPortParam != "" {
 		// 从URL查询参数获取动态端口
@@ -137,11 +130,34 @@ func handleWebSocketConnection(ctx context.Context, wsConn *websocket.Conn, r *h
 				log.Printf("无效的动态端口值: %v", paramValue)
 				return
 			}
+		} else {
+			// 从URL路径中提取动态端口
+			segments := strings.Split(strings.Trim(path, "/"), "/")
+			for i, seg := range segments {
+				if seg == rule.DynamicPortParam && i+1 < len(segments) {
+					portStr := segments[i+1]
+					if port, err := strconv.Atoi(portStr); err == nil && port > 0 && port <= 65535 {
+						targetPort = port
+						log.Printf("使用动态端口: %d (来自路径参数 %s)", targetPort, rule.DynamicPortParam)
+						// 从路径中移除动态端口参数及其值
+						segments = append(segments[:i], segments[i+2:]...)
+						// 重建路径
+						path = "/" + strings.Join(segments, "/")
+						if path == "//" {
+							path = "/"
+						}
+					} else {
+						log.Printf("无效的动态端口值: %v", portStr)
+						return
+					}
+					break
+				}
+			}
 		}
 	}
 
 	// 连接目标WebSocket服务器
-	targetAddr := fmt.Sprintf("ws://%s:%d%s", rule.TargetHost, targetPort, r.URL.Path)
+	targetAddr := fmt.Sprintf("ws://%s:%d%s", rule.TargetHost, targetPort, path)
 	targetWsConn, _, err := websocket.DefaultDialer.Dial(targetAddr, nil)
 	if err != nil {
 		log.Printf("连接目标WebSocket服务器失败 %s: %v", targetAddr, err)
