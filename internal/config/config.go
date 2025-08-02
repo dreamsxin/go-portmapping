@@ -15,11 +15,12 @@ import (
 // Rule 定义端口转发规则
 // 包含协议类型、监听端口、目标地址等必要信息
 type Rule struct {
-	Protocol   string `json:"protocol"`   // 协议类型: tcp/udp/websocket
-	ListenPort int    `json:"listenPort"` // 监听端口(1-65535)
-	TargetHost string `json:"targetHost"` // 目标主机(不能为空)
-	TargetPort int    `json:"targetPort"` // 目标端口(1-65535)
-	Enabled    bool   `json:"enabled"`    // 是否启用该规则
+	Protocol         string `json:"protocol"`         // 协议类型: tcp/udp/websocket
+	ListenPort       int    `json:"listenPort"`       // 监听端口(1-65535)
+	TargetHost       string `json:"targetHost"`       // 目标主机(不能为空)
+	TargetPort       int    `json:"targetPort"`       // 目标端口(1-65535)
+	Enabled          bool   `json:"enabled"`          // 是否启用该规则
+	DynamicPortParam string `json:"dynamicPortParam"` // 动态端口参数名(仅websocket协议有效)
 }
 
 var (

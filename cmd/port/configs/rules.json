@@ -18,6 +18,7 @@
       "listenPort": 8383,
       "targetHost": "127.0.0.1",
       "targetPort": 65165,
+      "dynamicPortParam": "port",
       "enabled": true
     }
   ]

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -80,7 +81,7 @@ func StartWebSocketForwarder(rule config.Rule, key string) {
 		}
 
 		// 处理WebSocket连接
-		go handleWebSocketConnection(ctx, wsConn, r.URL.Path, rule, key, cancel)
+		go handleWebSocketConnection(ctx, wsConn, r, rule, key, cancel)
 	})
 
 	// 创建HTTP服务器
@@ -103,7 +104,7 @@ func StartWebSocketForwarder(rule config.Rule, key string) {
 }
 
 // handleWebSocketConnection 处理WebSocket连接
-func handleWebSocketConnection(ctx context.Context, wsConn *websocket.Conn, path string, rule config.Rule, key string, cancel context.CancelFunc) {
+func handleWebSocketConnection(ctx context.Context, wsConn *websocket.Conn, r *http.Request, rule config.Rule, key string, cancel context.CancelFunc) {
 	defer func() {
 		wsConn.Close()
 		// 从连接跟踪中移除
@@ -122,8 +123,25 @@ func handleWebSocketConnection(ctx context.Context, wsConn *websocket.Conn, path
 	stats.IncrementConnections(key)
 	defer stats.DecrementConnections(key)
 
+	// 解析动态端口参数
+	targetPort := rule.TargetPort
+	if rule.DynamicPortParam != "" {
+		// 从URL查询参数获取动态端口
+		values := r.URL.Query()
+		// 从请求URL查询参数中提取动态端口
+		if paramValue := values.Get(rule.DynamicPortParam); paramValue != "" {
+			if port, err := strconv.Atoi(paramValue); err == nil && port > 0 && port <= 65535 {
+				targetPort = port
+				log.Printf("使用动态端口: %d (来自参数 %s)", targetPort, rule.DynamicPortParam)
+			} else {
+				log.Printf("无效的动态端口值: %v", paramValue)
+				return
+			}
+		}
+	}
+
 	// 连接目标WebSocket服务器
-	targetAddr := fmt.Sprintf("ws://%s:%d%s", rule.TargetHost, rule.TargetPort, path)
+	targetAddr := fmt.Sprintf("ws://%s:%d%s", rule.TargetHost, targetPort, r.URL.Path)
 	targetWsConn, _, err := websocket.DefaultDialer.Dial(targetAddr, nil)
 	if err != nil {
 		log.Printf("连接目标WebSocket服务器失败 %s: %v", targetAddr, err)
