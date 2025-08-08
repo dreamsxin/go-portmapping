@@ -39,6 +39,12 @@ func StartWebSocketForwarder(rule config.Rule, key string) {
 		return
 	}
 
+	// 从配置获取连接限制
+	if rule.MaxConnections <= 0 {
+		rule.MaxConnections = 1000
+	}
+	connLimit := make(chan struct{}, rule.MaxConnections)
+
 	addr := fmt.Sprintf(":%d", rule.ListenPort)
 
 	// 创建HTTP处理器

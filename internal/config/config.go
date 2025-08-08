@@ -18,8 +18,9 @@ type Rule struct {
 	Protocol         string `json:"protocol"`                   // 协议类型: tcp/udp/websocket
 	ListenPort       int    `json:"listenPort"`                 // 监听端口(1-65535)
 	TargetScheme     string `json:"targetScheme,omitempty"`     // SOCKS5可选，目标协议: http/https
-	TargetHost       string `json:"targetHost,omitempty"`       // SOCKS5可选，目标主机(不能为空)
+	TargetHost       string `json:"targetHost,omitempty"`       // SOCKS5可选，目标主机
 	TargetPort       int    `json:"targetPort,omitempty"`       // SOCKS5可选，目标端口(1-65535)
+	MaxConnections   int    `json:"maxConnections,omitempty"`   // 最大连接数，默认1000
 	Enabled          bool   `json:"enabled"`                    // 是否启用该规则
 	DynamicPortParam string `json:"dynamicPortParam,omitempty"` // 动态端口参数名(仅websocket协议有效)
 	TLSCertFile      string `json:"tlsCertFile,omitempty"`      // HTTPS证书路径
@@ -75,13 +76,15 @@ func (r *Rule) Validate() error {
 	}
 
 	// 验证目标主机
-	if r.TargetHost == "" {
-		return errors.New("目标主机不能为空")
-	}
+	if r.Protocol != "socks5" {
+		if r.TargetHost == "" {
+			return errors.New("目标主机不能为空")
+		}
 
-	// 验证目标端口
-	if r.TargetPort < 1 || r.TargetPort > 65535 {
-		return errors.New("目标端口必须在1-65535范围内")
+		// 验证目标端口
+		if r.TargetPort < 1 || r.TargetPort > 65535 {
+			return errors.New("目标端口必须在1-65535范围内")
+		}
 	}
 
 	return nil

@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -12,11 +13,11 @@ import (
 type TrafficStats struct {
 	BytesSent        uint64
 	BytesReceived    uint64
-	Connections      int
-	MaxConnections   int
+	Connections      int32
+	MaxConnections   int32
 	LastUpdated      time.Time
 	CreatedAt        time.Time
-	TotalConnections int
+	TotalConnections int32
 }
 
 var (
@@ -74,13 +75,12 @@ func CopyStreamWithStats(dst, src net.Conn, key string, isSent bool) (int64, err
 // UpdateTrafficStats 更新流量统计
 func UpdateTrafficStats(key string, bytes uint64, isSent bool) {
 	statsMu.Lock()
-	defer statsMu.Unlock()
-
 	stats := getOrCreateStats(key)
+	statsMu.Unlock()
 	if isSent {
-		stats.BytesSent += bytes
+		atomic.AddUint64(&stats.BytesSent, bytes)
 	} else {
-		stats.BytesReceived += bytes
+		atomic.AddUint64(&stats.BytesReceived, bytes)
 	}
 	stats.LastUpdated = time.Now()
 }
@@ -95,6 +95,8 @@ func getOrCreateStats(key string) *TrafficStats {
 			CreatedAt:   now,
 		}
 		statsMap[key] = stats
+	} else {
+		stats.LastUpdated = time.Now()
 	}
 	return stats
 }
@@ -102,14 +104,21 @@ func getOrCreateStats(key string) *TrafficStats {
 // IncrementConnections 增加连接计数
 func IncrementConnections(key string) {
 	statsMu.Lock()
-	defer statsMu.Unlock()
-
 	stats := getOrCreateStats(key)
-	stats.Connections++
-	stats.TotalConnections++
+	statsMu.Unlock()
+
+	current := atomic.AddInt32(&stats.Connections, 1)
+	atomic.AddInt32(&stats.TotalConnections, 1)
+
 	// 更新最大连接数
-	if stats.Connections > stats.MaxConnections {
-		stats.MaxConnections = stats.Connections
+	for {
+		max := atomic.LoadInt32(&stats.MaxConnections)
+		if current <= max {
+			break
+		}
+		if atomic.CompareAndSwapInt32(&stats.MaxConnections, max, current) {
+			break
+		}
 	}
 }
 

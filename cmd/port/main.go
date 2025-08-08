@@ -4,7 +4,9 @@ import (
 	"flag"
 	"log"
 	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/dreamsxin/go-portmapping/internal/config"
@@ -25,6 +27,15 @@ func main() {
 	flag.Parse()
 	log.SetOutput(os.Stdout)
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+	// 新增：设置信号处理
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		log.Println("收到退出信号，正在关闭服务...")
+		// 实现优雅关闭逻辑
+		os.Exit(0)
+	}()
 
 	// 确定配置文件路径，环境变量优先于命令行参数
 	configPath := os.Getenv("CONFIG_PATH")

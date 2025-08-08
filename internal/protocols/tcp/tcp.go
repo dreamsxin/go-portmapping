@@ -16,9 +16,6 @@ import (
 var (
 	listeners = make(map[string]net.Listener)
 	mu        sync.Mutex
-	// 连接数限制
-	maxConnections = 1000
-	connSemaphore  = make(chan struct{}, maxConnections)
 )
 
 // StartTCPForwarder 启动TCP转发（导出函数）
@@ -30,6 +27,12 @@ func StartTCPForwarder(rule config.Rule, key string) {
 	if _, exists := listeners[key]; exists {
 		return
 	}
+	// 新增：获取连接限制，默认为1000
+	maxConns := rule.MaxConnections
+	if maxConns <= 0 {
+		maxConns = 1000
+	}
+	connSemaphore := make(chan struct{}, maxConns)
 
 	addr := net.JoinHostPort("0.0.0.0", strconv.Itoa(rule.ListenPort))
 	listener, err := net.Listen("tcp", addr)
@@ -70,7 +73,7 @@ func StartTCPForwarder(rule config.Rule, key string) {
 				}()
 			default:
 				clientConn.Close()
-				log.Printf("TCP连接数已达上限: %d", maxConnections)
+				log.Printf("TCP连接数已达上限: %d", maxConns)
 			}
 		}
 	}()
