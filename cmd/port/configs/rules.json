@@ -27,5 +27,19 @@
     "targetHost": "127.0.0.1",
     "targetPort": 80,
     "enabled": true
+  },
+  {
+    "protocol": "socks5",
+    "listenPort": 1080,
+    "enabled": true,
+    "socks5Auth": "password",
+    "socks5Username": "proxyuser",
+    "socks5Password": "proxypass"
+  },
+  {
+    "protocol": "socks5",
+    "listenPort": 1081,
+    "enabled": true,
+    "socks5Auth": "none"
   }
 ]

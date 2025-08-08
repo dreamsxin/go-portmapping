@@ -231,11 +231,7 @@ func forwardWebSocketMessages(ctx context.Context, src, dst *websocket.Conn, key
 			}
 
 			// 更新流量统计
-			if isSent {
-				stats.RecordBytesSent(key, uint64(len(message)))
-			} else {
-				stats.RecordBytesReceived(key, uint64(len(message)))
-			}
+			stats.UpdateTrafficStats(key, uint64(len(message)), isSent)
 		}
 	}
 }

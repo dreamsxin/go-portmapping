@@ -127,26 +127,6 @@ func DecrementConnections(key string) {
 	stats.LastUpdated = time.Now()
 }
 
-// RecordBytesSent 记录发送字节数
-func RecordBytesSent(key string, bytes uint64) {
-	statsMu.Lock()
-	defer statsMu.Unlock()
-
-	stats := getOrCreateStats(key)
-	stats.BytesSent += bytes
-	stats.LastUpdated = time.Now()
-}
-
-// RecordBytesReceived 记录接收字节数
-func RecordBytesReceived(key string, bytes uint64) {
-	statsMu.Lock()
-	defer statsMu.Unlock()
-
-	stats := getOrCreateStats(key)
-	stats.BytesReceived += bytes
-	stats.LastUpdated = time.Now()
-}
-
 // PrintTrafficStats 定期打印流量统计
 func PrintTrafficStats(interval time.Duration) {
 	if interval <= 0 {

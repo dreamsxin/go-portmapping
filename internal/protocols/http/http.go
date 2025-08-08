@@ -115,7 +115,7 @@ func statsMiddleware(next http.Handler, key string) http.Handler {
 		// 记录接收字节数
 		reqSize := r.ContentLength
 		if reqSize > 0 {
-			stats.RecordBytesReceived(key, uint64(reqSize))
+			stats.UpdateTrafficStats(key, uint64(reqSize), false)
 		}
 
 		// 包装ResponseWriter以记录发送字节数
@@ -124,7 +124,7 @@ func statsMiddleware(next http.Handler, key string) http.Handler {
 
 		// 记录发送字节数
 		if wrapped.bytesWritten > 0 {
-			stats.RecordBytesSent(key, uint64(wrapped.bytesWritten))
+			stats.UpdateTrafficStats(key, uint64(wrapped.bytesWritten), true)
 		}
 	})
 }

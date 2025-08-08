@@ -129,7 +129,7 @@ func StartUDPForwarder(rule config.Rule, key string) {
 // handleUDPConnection 处理UDP连接和数据转发
 func handleUDPConnection(serverConn *net.UDPConn, clientAddr *net.UDPAddr, data []byte, rule config.Rule, key string, ctx context.Context) {
 	// 更新接收流量统计
-	stats.RecordBytesReceived(key, uint64(len(data)))
+	stats.UpdateTrafficStats(key, uint64(len(data)), false)
 
 	// 解析目标服务器地址
 	targetAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(rule.TargetHost, strconv.Itoa(rule.TargetPort)))
@@ -146,7 +146,7 @@ func handleUDPConnection(serverConn *net.UDPConn, clientAddr *net.UDPAddr, data 
 	}
 
 	// 更新发送流量统计
-	stats.RecordBytesSent(key, uint64(n))
+	stats.UpdateTrafficStats(key, uint64(n), true)
 
 	// 从目标服务器接收响应并返回给客户端
 	buffer := make([]byte, 65536)
@@ -171,8 +171,8 @@ func handleUDPConnection(serverConn *net.UDPConn, clientAddr *net.UDPAddr, data 
 			serverConn.WriteToUDP(buffer[:n], clientAddr)
 
 			// 更新流量统计
-			stats.RecordBytesReceived(key, uint64(n))
-			stats.RecordBytesSent(key, uint64(n))
+			stats.UpdateTrafficStats(key, uint64(n), false)
+			stats.UpdateTrafficStats(key, uint64(n), true)
 
 			// 更新最后活动时间
 			clientMu.Lock()

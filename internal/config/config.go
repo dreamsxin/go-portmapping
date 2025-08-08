@@ -15,16 +15,19 @@ import (
 // Rule 定义端口转发规则
 // 包含协议类型、监听端口、目标地址等必要信息
 type Rule struct {
-	Protocol         string `json:"protocol"`               // 协议类型: tcp/udp/websocket
-	ListenPort       int    `json:"listenPort"`             // 监听端口(1-65535)
-	TargetScheme     string `json:"targetScheme"`           // 目标协议: http/https
-	TargetHost       string `json:"targetHost"`             // 目标主机(不能为空)
-	TargetPort       int    `json:"targetPort"`             // 目标端口(1-65535)
-	Enabled          bool   `json:"enabled"`                // 是否启用该规则
-	DynamicPortParam string `json:"dynamicPortParam"`       // 动态端口参数名(仅websocket协议有效)
-	TLSCertFile      string `json:"tlsCertFile,omitempty"`  // HTTPS证书路径
-	TLSKeyFile       string `json:"tlsKeyFile,omitempty"`   // HTTPS密钥路径
-	HTTPSEnabled     bool   `json:"httpsEnabled,omitempty"` // 是否启用HTTPS
+	Protocol         string `json:"protocol"`                   // 协议类型: tcp/udp/websocket
+	ListenPort       int    `json:"listenPort"`                 // 监听端口(1-65535)
+	TargetScheme     string `json:"targetScheme,omitempty"`     // SOCKS5可选，目标协议: http/https
+	TargetHost       string `json:"targetHost,omitempty"`       // SOCKS5可选，目标主机(不能为空)
+	TargetPort       int    `json:"targetPort,omitempty"`       // SOCKS5可选，目标端口(1-65535)
+	Enabled          bool   `json:"enabled"`                    // 是否启用该规则
+	DynamicPortParam string `json:"dynamicPortParam,omitempty"` // 动态端口参数名(仅websocket协议有效)
+	TLSCertFile      string `json:"tlsCertFile,omitempty"`      // HTTPS证书路径
+	TLSKeyFile       string `json:"tlsKeyFile,omitempty"`       // HTTPS密钥路径
+	HTTPSEnabled     bool   `json:"httpsEnabled,omitempty"`     // 是否启用HTTPS
+	SOCKS5Auth       string `json:"socks5Auth,omitempty"`       // "none"或"password"
+	SOCKS5Username   string `json:"socks5Username,omitempty"`
+	SOCKS5Password   string `json:"socks5Password,omitempty"`
 }
 
 var (
@@ -37,8 +40,8 @@ var (
 func (r *Rule) Validate() error {
 	// 验证协议类型
 	// 验证协议类型
-	if r.Protocol != "tcp" && r.Protocol != "udp" && r.Protocol != "websocket" && r.Protocol != "http" && r.Protocol != "https" {
-		return errors.New("不支持的协议类型，必须是tcp/udp/websocket/http/https")
+	if r.Protocol != "tcp" && r.Protocol != "udp" && r.Protocol != "websocket" && r.Protocol != "http" && r.Protocol != "socks5" {
+		return errors.New("不支持的协议类型，必须是tcp/udp/websocket/http/socks5")
 	}
 
 	// HTTPS协议需要验证证书文件
@@ -52,6 +55,17 @@ func (r *Rule) Validate() error {
 		}
 		if _, err := os.Stat(r.TLSKeyFile); os.IsNotExist(err) {
 			return fmt.Errorf("密钥文件不存在: %s", r.TLSKeyFile)
+		}
+	} else if r.Protocol == "socks5" { // SOCKS5协议验证
+		// 验证认证方式
+		if r.SOCKS5Auth == "" {
+			r.SOCKS5Auth = "none" // 默认无认证
+		} else if r.SOCKS5Auth != "none" && r.SOCKS5Auth != "password" {
+			return errors.New("SOCKS5认证方式必须是none或password")
+		}
+		// 密码认证需要检查用户名密码
+		if r.SOCKS5Auth == "password" && (r.SOCKS5Username == "" || r.SOCKS5Password == "") {
+			return errors.New("SOCKS5密码认证需要配置socks5Username和socks5Password")
 		}
 	}
 

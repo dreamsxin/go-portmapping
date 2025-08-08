@@ -9,6 +9,7 @@ import (
 
 	"github.com/dreamsxin/go-portmapping/internal/config"
 	"github.com/dreamsxin/go-portmapping/internal/protocols/http"
+	"github.com/dreamsxin/go-portmapping/internal/protocols/socks5"
 	"github.com/dreamsxin/go-portmapping/internal/protocols/tcp"
 	"github.com/dreamsxin/go-portmapping/internal/protocols/udp"
 	"github.com/dreamsxin/go-portmapping/internal/protocols/websocket"
@@ -78,6 +79,8 @@ func startAllForwarders() {
 	tcp.StopTCPForwarders(activeKeys)
 	udp.StopUDPForwarders(activeKeys)
 	websocket.StopWebSocketForwarders(activeKeys)
+	http.StopHTTPForwarders(activeKeys)
+	socks5.StopSOCKS5Forwarders(activeKeys)
 
 	// 启动或重启启用的规则
 	for _, rule := range rules {
@@ -95,6 +98,8 @@ func startAllForwarders() {
 			websocket.StartWebSocketForwarder(rule, key)
 		case "http":
 			http.StartHTTPForwarder(rule, key)
+		case "socks5":
+			socks5.StartSOCKS5Forwarder(rule, key)
 		default:
 			log.Printf("不支持的协议类型: %s", rule.Protocol)
 		}
