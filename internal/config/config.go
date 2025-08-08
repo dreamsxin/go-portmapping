@@ -15,12 +15,16 @@ import (
 // Rule 定义端口转发规则
 // 包含协议类型、监听端口、目标地址等必要信息
 type Rule struct {
-	Protocol         string `json:"protocol"`         // 协议类型: tcp/udp/websocket
-	ListenPort       int    `json:"listenPort"`       // 监听端口(1-65535)
-	TargetHost       string `json:"targetHost"`       // 目标主机(不能为空)
-	TargetPort       int    `json:"targetPort"`       // 目标端口(1-65535)
-	Enabled          bool   `json:"enabled"`          // 是否启用该规则
-	DynamicPortParam string `json:"dynamicPortParam"` // 动态端口参数名(仅websocket协议有效)
+	Protocol         string `json:"protocol"`               // 协议类型: tcp/udp/websocket
+	ListenPort       int    `json:"listenPort"`             // 监听端口(1-65535)
+	TargetScheme     string `json:"targetScheme"`           // 目标协议: http/https
+	TargetHost       string `json:"targetHost"`             // 目标主机(不能为空)
+	TargetPort       int    `json:"targetPort"`             // 目标端口(1-65535)
+	Enabled          bool   `json:"enabled"`                // 是否启用该规则
+	DynamicPortParam string `json:"dynamicPortParam"`       // 动态端口参数名(仅websocket协议有效)
+	TLSCertFile      string `json:"tlsCertFile,omitempty"`  // HTTPS证书路径
+	TLSKeyFile       string `json:"tlsKeyFile,omitempty"`   // HTTPS密钥路径
+	HTTPSEnabled     bool   `json:"httpsEnabled,omitempty"` // 是否启用HTTPS
 }
 
 var (
@@ -32,8 +36,23 @@ var (
 // Validate 验证规则是否有效
 func (r *Rule) Validate() error {
 	// 验证协议类型
-	if r.Protocol != "tcp" && r.Protocol != "udp" && r.Protocol != "websocket" {
-		return errors.New("不支持的协议类型，必须是tcp/udp/websocket")
+	// 验证协议类型
+	if r.Protocol != "tcp" && r.Protocol != "udp" && r.Protocol != "websocket" && r.Protocol != "http" && r.Protocol != "https" {
+		return errors.New("不支持的协议类型，必须是tcp/udp/websocket/http/https")
+	}
+
+	// HTTPS协议需要验证证书文件
+	if r.HTTPSEnabled && r.Protocol == "http" {
+		if r.TLSCertFile == "" || r.TLSKeyFile == "" {
+			return errors.New("HTTPS协议需要配置tlsCertFile和tlsKeyFile")
+		}
+		// 验证证书文件是否存在
+		if _, err := os.Stat(r.TLSCertFile); os.IsNotExist(err) {
+			return fmt.Errorf("证书文件不存在: %s", r.TLSCertFile)
+		}
+		if _, err := os.Stat(r.TLSKeyFile); os.IsNotExist(err) {
+			return fmt.Errorf("密钥文件不存在: %s", r.TLSKeyFile)
+		}
 	}
 
 	// 验证监听端口

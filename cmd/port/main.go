@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dreamsxin/go-portmapping/internal/config"
+	"github.com/dreamsxin/go-portmapping/internal/protocols/http"
 	"github.com/dreamsxin/go-portmapping/internal/protocols/tcp"
 	"github.com/dreamsxin/go-portmapping/internal/protocols/udp"
 	"github.com/dreamsxin/go-portmapping/internal/protocols/websocket"
@@ -92,6 +93,8 @@ func startAllForwarders() {
 			udp.StartUDPForwarder(rule, key)
 		case "websocket":
 			websocket.StartWebSocketForwarder(rule, key)
+		case "http":
+			http.StartHTTPForwarder(rule, key)
 		default:
 			log.Printf("不支持的协议类型: %s", rule.Protocol)
 		}

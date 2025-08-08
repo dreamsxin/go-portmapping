@@ -1,24 +1,31 @@
 [
-    {
-      "protocol": "tcp",
-      "listenPort": 8381,
-      "targetHost": "192.168.0.99",
-      "targetPort": 8081,
-      "enabled": true
-    },
-    {
-      "protocol": "udp",
-      "listenPort": 8382,
-      "targetHost": "8.8.8.8",
-      "targetPort": 53,
-      "enabled": true
-    },
-    {
-      "protocol": "websocket",
-      "listenPort": 8383,
-      "targetHost": "127.0.0.1",
-      "targetPort": 65165,
-      "dynamicPortParam": "port",
-      "enabled": true
-    }
-  ]
+  {
+    "protocol": "tcp",
+    "listenPort": 8381,
+    "targetHost": "192.168.0.99",
+    "targetPort": 8081,
+    "enabled": true
+  },
+  {
+    "protocol": "udp",
+    "listenPort": 8382,
+    "targetHost": "8.8.8.8",
+    "targetPort": 53,
+    "enabled": true
+  },
+  {
+    "protocol": "websocket",
+    "listenPort": 8383,
+    "targetHost": "127.0.0.1",
+    "targetPort": 65165,
+    "dynamicPortParam": "port",
+    "enabled": true
+  },
+  {
+    "protocol": "http",
+    "listenPort": 8384,
+    "targetHost": "127.0.0.1",
+    "targetPort": 80,
+    "enabled": true
+  }
+]
