@@ -301,12 +301,17 @@ func parseTargetAddress(conn net.Conn, addrType byte) (net.Addr, error) {
 		if _, err := io.ReadFull(conn, domain); err != nil {
 			return nil, err
 		}
+		// 解析域名获取IP地址
+		ipAddr, err := net.ResolveIPAddr("ip", string(domain))
+		if err != nil {
+			return nil, fmt.Errorf("域名解析失败: %v", err)
+		}
 		portData := make([]byte, 2)
 		if _, err := io.ReadFull(conn, portData); err != nil {
 			return nil, err
 		}
 		port := binary.BigEndian.Uint16(portData)
-		return &net.TCPAddr{IP: net.ParseIP(string(domain)), Port: int(port)}, nil
+		return &net.TCPAddr{IP: ipAddr.IP, Port: int(port)}, nil
 
 	case addrTypeIPv6:
 		// IPv6地址 (16字节) + 端口 (2字节)
@@ -339,36 +344,39 @@ func handleConnectCommand(clientConn net.Conn, targetAddr net.Addr, rule *config
 	}
 
 	// 开始双向数据转发并统计流量
+	var wg sync.WaitGroup
+	wg.Add(2)
 	errChan := make(chan error, 2)
 
 	// 客户端到目标服务器 (发送方向)
 	go func() {
-		bytesWritten, err := io.Copy(targetConn, clientConn)
+		defer wg.Done()
+		// 使用stats.CopyStreamWithStats替代io.Copy以支持流量统计
+		_, err := stats.CopyStreamWithStats(targetConn, clientConn, key, true)
 		if err != nil && !isClosedConnError(err) {
 			errChan <- fmt.Errorf("客户端到目标服务器转发失败: %v", err)
 		}
-		// 发送方向流量统计
-		stats.UpdateTrafficStats(key, uint64(bytesWritten), true)
-		errChan <- nil
 	}()
 
 	// 目标服务器到客户端 (接收方向)
 	go func() {
-		bytesWritten, err := io.Copy(clientConn, targetConn)
+		defer wg.Done()
+		// 使用stats.CopyStreamWithStats替代io.Copy以支持流量统计
+		_, err := stats.CopyStreamWithStats(clientConn, targetConn, key, false)
 		if err != nil && !isClosedConnError(err) {
 			errChan <- fmt.Errorf("目标服务器到客户端转发失败: %v", err)
 		}
-		// 接收方向流量统计
-		stats.UpdateTrafficStats(key, uint64(bytesWritten), false)
-		errChan <- nil
 	}()
-
-	// 等待任一方向转发结束或出错
-	for i := 0; i < 2; i++ {
-		if err := <-errChan; err != nil {
-			return err
-		}
+	// 等待任一方向出错或完成
+	err = <-errChan
+	if err != nil {
+		log.Printf("连接传输错误: %v", err)
 	}
+	clientConn.Close()
+	targetConn.Close()
+
+	wg.Wait()
+	log.Printf("TCP连接已关闭: %s <-> %s", clientConn.RemoteAddr(), targetAddr)
 	return nil
 }
 
@@ -380,9 +388,19 @@ func sendReply(conn net.Conn, replyCode byte, addr net.Addr) error {
 	// 添加地址信息 (目前仅支持IPv4)
 	if addr != nil {
 		tcpAddr, ok := addr.(*net.TCPAddr)
-		if ok && tcpAddr.IP.To4() != nil {
-			reply = append(reply, addrTypeIPv4)
-			reply = append(reply, tcpAddr.IP.To4()...)
+		if ok {
+			if tcpAddr.IP.To4() != nil {
+				// IPv4地址
+				reply = append(reply, addrTypeIPv4)
+				reply = append(reply, tcpAddr.IP.To4()...)
+			} else if tcpAddr.IP.To16() != nil {
+				// IPv6地址
+				reply = append(reply, addrTypeIPv6)
+				reply = append(reply, tcpAddr.IP.To16()...)
+			} else {
+				// 未知地址类型
+				reply = append(reply, addrTypeIPv4, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)
+			}
 			portBytes := make([]byte, 2)
 			binary.BigEndian.PutUint16(portBytes, uint16(tcpAddr.Port))
 			reply = append(reply, portBytes...)

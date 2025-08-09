@@ -1,7 +1,6 @@
 package tcp
 
 import (
-	"context"
 	"errors"
 	"log"
 	"net"
@@ -89,10 +88,6 @@ func HandleTCPConnection(clientConn net.Conn, rule config.Rule, key string) {
 	stats.IncrementConnections(key)
 	defer stats.DecrementConnections(key)
 
-	// 创建上下文用于取消操作
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	// 连接目标服务器
 	targetAddr := net.JoinHostPort(rule.TargetHost, strconv.Itoa(rule.TargetPort))
 	// 设置连接超时
@@ -134,19 +129,12 @@ func HandleTCPConnection(clientConn net.Conn, rule config.Rule, key string) {
 	}()
 
 	// 等待任一方向出错或完成
-	select {
-	case err := <-errChan:
-		if err != nil {
-			log.Printf("连接传输错误: %v", err)
-		}
-		// 取消上下文，关闭所有连接
-		cancel()
-		clientConn.Close()
-		conn.Close()
-	case <-ctx.Done():
-		// 上下文已取消
-		return
+	err = <-errChan
+	if err != nil {
+		log.Printf("连接传输错误: %v", err)
 	}
+	clientConn.Close()
+	conn.Close()
 
 	// 等待所有goroutine完成
 	wg.Wait()
